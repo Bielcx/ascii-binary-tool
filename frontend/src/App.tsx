@@ -2,23 +2,30 @@ import { useEffect, useState } from "react";
 import UploadTrim from "./UploadTrim";
 import Editor from "./Editor";
 import AsciiPlayer from "./AsciiPlayer";
+import VideoLayerEditor from "./VideoLayerEditor";
 import type { VideoMeta, SegmentRange } from "./api";
 import "./styles.css";
 
 type Stage =
   | { step: "upload" }
   | { step: "ascii" }
+  | { step: "layers" }
   | { step: "edit"; meta: VideoMeta; segments: SegmentRange[] };
 
 export default function App() {
   const [stage, setStage] = useState<Stage>(() => (
-    window.location.hash === "#ascii" ? { step: "ascii" } : { step: "upload" }
+    window.location.hash === "#ascii"
+      ? { step: "ascii" }
+      : window.location.hash === "#layers"
+        ? { step: "layers" }
+        : { step: "upload" }
   ));
   const [loadedVideo, setLoadedVideo] = useState<{ meta: VideoMeta; file: File } | null>(null);
 
   useEffect(() => {
     function syncHash() {
       if (window.location.hash === "#ascii") setStage({ step: "ascii" });
+      else if (window.location.hash === "#layers") setStage({ step: "layers" });
       else if (window.location.hash === "" || window.location.hash === "#upload") setStage({ step: "upload" });
     }
     window.addEventListener("hashchange", syncHash);
@@ -34,6 +41,7 @@ export default function App() {
         <>
           <div className="tool-switch">
             <button className="active">editor de mascara</button>
+            <button onClick={() => { window.location.hash = "layers"; setStage({ step: "layers" }); }}>editor de video</button>
             <button onClick={() => { window.location.hash = "ascii"; setStage({ step: "ascii" }); }}>ASCII Player</button>
           </div>
           <UploadTrim
@@ -50,6 +58,19 @@ export default function App() {
       )}
 
       {stage.step === "ascii" && <AsciiPlayer onBack={() => { window.location.hash = "upload"; setStage({ step: "upload" }); }} />}
+
+      {stage.step === "layers" && (
+        <VideoLayerEditor
+          initialMeta={loadedVideo?.meta ?? null}
+          initialFile={loadedVideo?.file ?? null}
+          onVideoLoaded={(meta, file) => setLoadedVideo({ meta, file })}
+          onBack={() => { window.location.hash = "upload"; setStage({ step: "upload" }); }}
+          onOpenMaskEditor={(meta, file, segments) => {
+            setLoadedVideo({ meta, file });
+            setStage({ step: "edit", meta, segments });
+          }}
+        />
+      )}
 
       {stage.step === "edit" && (
         <Editor
