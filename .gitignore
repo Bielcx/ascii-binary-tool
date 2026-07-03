@@ -1,0 +1,11 @@
+backend/venv/
+backend/storage/*
+!backend/storage/.gitkeep
+backend/__pycache__/
+**/__pycache__/
+*.log
+
+frontend/node_modules/
+frontend/dist/
+
+.DS_Store
