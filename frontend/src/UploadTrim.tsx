@@ -62,6 +62,7 @@ export default function UploadTrim({
   const [segments, setSegments] = useState<SegmentRange[]>([]);
   const [presetId, setPresetId] = useState(EFFECT_PRESETS[0].id);
   const [currentTime, setCurrentTime] = useState(0);
+  const [videoPlaying, setVideoPlaying] = useState(false);
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -88,6 +89,7 @@ export default function UploadTrim({
       setStart(0);
       setEnd(Math.min(0.5, m.duration));
       setSegments([]);
+      setVideoPlaying(false);
     } catch (e) {
       alert("Erro no upload: " + e);
     } finally {
@@ -113,6 +115,9 @@ export default function UploadTrim({
     ? Number.isFinite(start) && Number.isFinite(end) && start >= 0 && end > start && end <= meta.duration
     : false;
   const selectedSegments = segments.length ? segments : [{ start, end }];
+  const playbackSegments = selectedSegments
+    .filter((seg) => Number.isFinite(seg.start) && Number.isFinite(seg.end) && seg.end > seg.start)
+    .sort((a, b) => a.start - b.start);
   const totalDuration = selectedSegments.reduce((sum, seg) => sum + (seg.end - seg.start), 0);
 
   function addSegment() {
@@ -164,6 +169,61 @@ export default function UploadTrim({
     const video = videoRef.current;
     if (video) video.currentTime = next;
     setCurrentTime(next);
+  }
+
+  function segmentIndexAt(time: number) {
+    return playbackSegments.findIndex((seg) => time >= seg.start && time < seg.end);
+  }
+
+  function firstSegmentIndexAfter(time: number) {
+    const index = playbackSegments.findIndex((seg) => seg.start > time);
+    return index === -1 ? 0 : index;
+  }
+
+  function handleVideoPlay(video: HTMLVideoElement) {
+    setVideoPlaying(true);
+    if (playbackSegments.length === 0) return;
+    if (segmentIndexAt(video.currentTime) === -1) {
+      const next = playbackSegments[firstSegmentIndexAfter(video.currentTime)];
+      video.currentTime = next.start;
+      setCurrentTime(next.start);
+    }
+  }
+
+  function toggleSelectedPlayback() {
+    const video = videoRef.current;
+    if (!video || playbackSegments.length === 0) return;
+    if (!video.paused) {
+      video.pause();
+      setVideoPlaying(false);
+      return;
+    }
+    if (segmentIndexAt(video.currentTime) === -1) {
+      video.currentTime = playbackSegments[0].start;
+      setCurrentTime(playbackSegments[0].start);
+    }
+    void video.play().catch(() => setVideoPlaying(false));
+  }
+
+  function handleVideoTimeUpdate(video: HTMLVideoElement) {
+    const time = video.currentTime;
+    setCurrentTime(time);
+    if (video.paused || playbackSegments.length === 0) return;
+
+    const currentIndex = segmentIndexAt(time);
+    if (currentIndex === -1) {
+      const next = playbackSegments[firstSegmentIndexAfter(time)];
+      video.currentTime = next.start;
+      setCurrentTime(next.start);
+      return;
+    }
+
+    const currentSegment = playbackSegments[currentIndex];
+    if (time >= currentSegment.end - 0.03) {
+      const next = playbackSegments[(currentIndex + 1) % playbackSegments.length];
+      video.currentTime = next.start;
+      setCurrentTime(next.start);
+    }
   }
 
   function timelineTime(clientX: number, element: HTMLElement) {
@@ -270,8 +330,13 @@ export default function UploadTrim({
             ref={videoRef}
             src={videoUrl}
             controls
+            muted
+            playsInline
             onLoadedMetadata={(e) => setCurrentTime(e.currentTarget.currentTime)}
-            onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+            onPlay={(e) => handleVideoPlay(e.currentTarget)}
+            onPause={() => setVideoPlaying(false)}
+            onEnded={() => setVideoPlaying(false)}
+            onTimeUpdate={(e) => handleVideoTimeUpdate(e.currentTarget)}
             onSeeked={(e) => setCurrentTime(e.currentTarget.currentTime)}
             style={{ width: "100%", maxHeight: 420, background: "#000", borderRadius: 4 }}
           />
@@ -280,6 +345,9 @@ export default function UploadTrim({
           </p>
           <p className="status-line">
             tempo atual: {currentTime.toFixed(2)}s
+          </p>
+          <p className="status-line">
+            playback limitado aos intervalos selecionados
           </p>
 
           <div className="timeline-panel">
@@ -318,6 +386,9 @@ export default function UploadTrim({
               <button className="ghost" onClick={() => setRangeEnd(currentTime)}>marcar fim</button>
               <button className="ghost" onClick={() => seekTo(start)}>ir inicio</button>
               <button className="ghost" onClick={() => seekTo(end)}>ir fim</button>
+              <button className="ghost" disabled={playbackSegments.length === 0} onClick={toggleSelectedPlayback}>
+                {videoPlaying ? "pausar preview" : "preview intervalos"}
+              </button>
               <button className="ghost" disabled={!segmentValid} onClick={addSegment}>adicionar intervalo</button>
             </div>
           </div>

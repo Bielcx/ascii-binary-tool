@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import UploadTrim from "./UploadTrim";
 import Editor from "./Editor";
 import AsciiPlayer from "./AsciiPlayer";
@@ -12,8 +12,19 @@ type Stage =
   | { step: "edit"; meta: VideoMeta; segments: SegmentRange[]; preset?: EffectPreset };
 
 export default function App() {
-  const [stage, setStage] = useState<Stage>({ step: "upload" });
+  const [stage, setStage] = useState<Stage>(() => (
+    window.location.hash === "#ascii" ? { step: "ascii" } : { step: "upload" }
+  ));
   const [loadedVideo, setLoadedVideo] = useState<{ meta: VideoMeta; file: File } | null>(null);
+
+  useEffect(() => {
+    function syncHash() {
+      if (window.location.hash === "#ascii") setStage({ step: "ascii" });
+      else if (window.location.hash === "" || window.location.hash === "#upload") setStage({ step: "upload" });
+    }
+    window.addEventListener("hashchange", syncHash);
+    return () => window.removeEventListener("hashchange", syncHash);
+  }, []);
 
   return (
     <div>
@@ -24,7 +35,7 @@ export default function App() {
         <>
           <div className="tool-switch">
             <button className="active">editor de mascara</button>
-            <button onClick={() => setStage({ step: "ascii" })}>ASCII Player</button>
+            <button onClick={() => { window.location.hash = "ascii"; setStage({ step: "ascii" }); }}>ASCII Player</button>
           </div>
           <UploadTrim
             initialMeta={loadedVideo?.meta ?? null}
@@ -34,12 +45,12 @@ export default function App() {
               setStage({ step: "edit", meta, segments, preset });
             }}
             onClear={() => setLoadedVideo(null)}
-            onOpenAscii={() => setStage({ step: "ascii" })}
+            onOpenAscii={() => { window.location.hash = "ascii"; setStage({ step: "ascii" }); }}
           />
         </>
       )}
 
-      {stage.step === "ascii" && <AsciiPlayer onBack={() => setStage({ step: "upload" })} />}
+      {stage.step === "ascii" && <AsciiPlayer onBack={() => { window.location.hash = "upload"; setStage({ step: "upload" }); }} />}
 
       {stage.step === "edit" && (
         <Editor

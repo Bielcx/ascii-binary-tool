@@ -4,6 +4,16 @@ Editor local para aplicar um efeito ASCII/binary rain em trechos de video,
 focado em silhueta de pessoa + skate. O app roda localmente com FastAPI,
 OpenCV/ffmpeg e Vite/React.
 
+## Screenshots
+
+### Lobby com presets
+
+![Lobby com presets](docs/screenshots/lobby.png)
+
+### ASCII Player estilo terminal
+
+![ASCII Player estilo terminal](docs/screenshots/ascii-player.png)
+
 ## Inspiracao
 
 Os presets de ASCII, mapas de caracteres, modo grayscale/cor do video,
@@ -53,6 +63,7 @@ Abra o Vite em `http://127.0.0.1:5173/` ou na porta que ele informar.
 ## Features atuais
 
 - Multiplos intervalos no mesmo video.
+- Preview do video limitado aos intervalos selecionados.
 - Mascara automatica hibrida: pessoa por IA + movimento proximo para pegar skate.
 - Edicao manual da mascara por frame.
 - Presets ASCII: binary, blocks, braille, source color, grayscale.
