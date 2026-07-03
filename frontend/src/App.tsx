@@ -3,13 +3,12 @@ import UploadTrim from "./UploadTrim";
 import Editor from "./Editor";
 import AsciiPlayer from "./AsciiPlayer";
 import type { VideoMeta, SegmentRange } from "./api";
-import type { EffectPreset } from "./presets";
 import "./styles.css";
 
 type Stage =
   | { step: "upload" }
   | { step: "ascii" }
-  | { step: "edit"; meta: VideoMeta; segments: SegmentRange[]; preset?: EffectPreset };
+  | { step: "edit"; meta: VideoMeta; segments: SegmentRange[] };
 
 export default function App() {
   const [stage, setStage] = useState<Stage>(() => (
@@ -40,9 +39,9 @@ export default function App() {
           <UploadTrim
             initialMeta={loadedVideo?.meta ?? null}
             initialFile={loadedVideo?.file ?? null}
-            onReady={(meta, file, segments, preset) => {
+            onReady={(meta, file, segments) => {
               setLoadedVideo({ meta, file });
-              setStage({ step: "edit", meta, segments, preset });
+              setStage({ step: "edit", meta, segments });
             }}
             onClear={() => setLoadedVideo(null)}
             onOpenAscii={() => { window.location.hash = "ascii"; setStage({ step: "ascii" }); }}
@@ -56,7 +55,6 @@ export default function App() {
         <Editor
           meta={stage.meta}
           segments={stage.segments}
-          initialPreset={stage.preset}
           onBack={() => setStage({ step: "upload" })}
         />
       )}

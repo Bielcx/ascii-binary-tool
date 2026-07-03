@@ -25,9 +25,12 @@ export interface RenderParams {
   char_map: string;
   color_mode: "solid" | "source" | "grayscale";
   effect_type: "rain" | "blink" | "tracking" | "mesh" | "reveal" | "glitch";
+  effect_types: Array<"rain" | "blink" | "tracking" | "mesh" | "reveal" | "glitch">;
   intensity: number;
   label: string;
   label_background: boolean;
+  sfx_type: "none" | "tech" | "spatial" | "zap" | "glitch";
+  sfx_volume: number;
 }
 
 export async function uploadVideo(file: File): Promise<VideoMeta> {

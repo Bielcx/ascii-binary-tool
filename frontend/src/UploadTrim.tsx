@@ -2,8 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { uploadVideo } from "./api";
 import type { SegmentRange, VideoMeta } from "./api";
-import { EFFECT_PRESETS, presetById } from "./presets";
-import type { EffectPreset } from "./presets";
 
 const LOBBY_VIDEO = "/examples/motion-blocks.mp4";
 
@@ -51,7 +49,7 @@ export default function UploadTrim({
 }: {
   initialFile?: File | null;
   initialMeta?: VideoMeta | null;
-  onReady: (meta: VideoMeta, file: File, segments: SegmentRange[], preset: EffectPreset) => void;
+  onReady: (meta: VideoMeta, file: File, segments: SegmentRange[]) => void;
   onClear?: () => void;
   onOpenAscii?: () => void;
 }) {
@@ -60,7 +58,6 @@ export default function UploadTrim({
   const [start, setStart] = useState(0);
   const [end, setEnd] = useState(Math.min(0.5, initialMeta?.duration ?? 0.5));
   const [segments, setSegments] = useState<SegmentRange[]>([]);
-  const [presetId, setPresetId] = useState(EFFECT_PRESETS[0].id);
   const [currentTime, setCurrentTime] = useState(0);
   const [videoPlaying, setVideoPlaying] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -97,8 +94,7 @@ export default function UploadTrim({
     }
   }
 
-  async function handleExample(src: string, name: string, nextPresetId: string) {
-    setPresetId(nextPresetId);
+  async function handleExample(src: string, name: string) {
     setBusy(true);
     try {
       const res = await fetch(src);
@@ -306,7 +302,7 @@ export default function UploadTrim({
                   if (example.tool === "ascii") {
                     onOpenAscii?.();
                   } else {
-                    handleExample(example.src, example.src.split("/").pop() ?? "example.mp4", example.presetId);
+                    handleExample(example.src, example.src.split("/").pop() ?? "example.mp4");
                   }
                 }}
               >
@@ -393,22 +389,6 @@ export default function UploadTrim({
             </div>
           </div>
 
-          <div className="preset-picker">
-            <label className="field">preset inicial</label>
-            <div className="preset-grid">
-              {EFFECT_PRESETS.map((preset) => (
-                <button
-                  key={preset.id}
-                  className={presetId === preset.id ? "active" : ""}
-                  onClick={() => setPresetId(preset.id)}
-                >
-                  <span>{preset.name}</span>
-                  <small>{preset.hint}</small>
-                </button>
-              ))}
-            </div>
-          </div>
-
           <details className="trim-fine-panel">
             <summary>ajuste fino do trecho</summary>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
@@ -472,7 +452,7 @@ export default function UploadTrim({
             <button
               className="primary"
               disabled={!segmentValid && segments.length === 0}
-              onClick={() => onReady(meta, file, selectedSegments, presetById(presetId))}
+              onClick={() => onReady(meta, file, selectedSegments)}
             >
               usar intervalo(s) -&gt;
             </button>

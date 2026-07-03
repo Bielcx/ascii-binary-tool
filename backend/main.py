@@ -266,9 +266,12 @@ class RenderParams(BaseModel):
     char_map: str = "01"
     color_mode: str = "solid"  # solid | source | grayscale
     effect_type: str = "rain"  # rain | blink | tracking | mesh | reveal | glitch
+    effect_types: Optional[list[str]] = None
     intensity: float = 1.0
     label: str = "REPROGRAMMING"
     label_background: bool = False
+    sfx_type: str = "none"  # none | tech | spatial | zap | glitch
+    sfx_volume: float = 0.45
 
 
 def _parse_bgr(value: str) -> tuple[int, int, int]:
@@ -389,6 +392,16 @@ def _apply_reveal_mask(mask: np.ndarray, frame_index: int, intensity: float) -> 
     return cv2.bitwise_and(mask, gate)
 
 
+def _active_effects(params) -> list[str]:
+    allowed = {"rain", "blink", "tracking", "mesh", "reveal", "glitch"}
+    order = ["rain", "reveal", "blink", "tracking", "mesh", "glitch"]
+    raw = getattr(params, "effect_types", None) or [getattr(params, "effect_type", "rain")]
+    active = [effect for effect in raw if effect in allowed]
+    if not active:
+        active = ["rain"]
+    return [effect for effect in order if effect in active]
+
+
 def _draw_glitch_panels(out: np.ndarray, source: Optional[np.ndarray], mask: np.ndarray,
                         color: tuple[int, int, int], frame_index: int, intensity: float) -> None:
     bbox = _mask_bbox(mask)
@@ -422,11 +435,15 @@ def _render_effect_frame(d: Path, renderer: RainRenderer, mask: np.ndarray, fram
                          background_color: tuple[int, int, int]) -> np.ndarray:
     h, w = mask.shape
     source = cv2.imread(str(frame_path))
+    active_effects = _active_effects(params)
     render_mask = mask
-    if params.effect_type == "reveal":
+    if "reveal" in active_effects:
         render_mask = _apply_reveal_mask(mask, frame_index, params.intensity)
 
-    if params.background_mode == "color":
+    render_rain = "rain" in active_effects
+    if not render_rain:
+        out = _background_frame(d, params, frame_path, w, h, background_color)
+    elif params.background_mode == "color":
         out = renderer.render(render_mask, frame_index, scroll_speed=params.scroll_speed,
                               trail_len=params.trail_len, color_bgr=color,
                               background_bgr=background_color,
@@ -442,18 +459,16 @@ def _render_effect_frame(d: Path, renderer: RainRenderer, mask: np.ndarray, fram
         out = _background_frame(d, params, frame_path, w, h, background_color)
         out[effect_mask] = effect[effect_mask]
 
-    if params.effect_type == "blink":
+    if "blink" in active_effects:
         pulse = 0.18 + 0.82 * (0.5 + 0.5 * math.sin(frame_index * (0.6 + params.intensity * 0.5)))
         m = (mask > 40)
         out[m] = np.clip(out[m].astype(np.float32) * (0.25 + pulse * 1.35), 0, 255).astype(np.uint8)
-    elif params.effect_type == "tracking":
+    if "tracking" in active_effects:
         _draw_tracking_box(out, mask, color, params.label, frame_index, params.intensity, params.label_background)
-    elif params.effect_type == "mesh":
+    if "mesh" in active_effects:
         _draw_mesh(out, mask, color, frame_index, params.intensity)
-        _draw_tracking_box(out, mask, color, params.label, frame_index, params.intensity * 0.65, params.label_background)
-    elif params.effect_type == "glitch":
+    if "glitch" in active_effects:
         _draw_glitch_panels(out, source, mask, color, frame_index, params.intensity)
-        _draw_tracking_box(out, mask, color, params.label, frame_index, params.intensity, params.label_background)
 
     return out
 
@@ -531,6 +546,68 @@ def render_ascii_frame(video_id: str, frame_index: int, params: RenderParams):
 
 # ---------------------------------------------------------------- export final
 
+def _has_audio_stream(path: Path) -> bool:
+    probe = subprocess.run([
+        "ffprobe", "-v", "error", "-select_streams", "a:0",
+        "-show_entries", "stream=index", "-of", "json", str(path)
+    ], capture_output=True, text=True)
+    if probe.returncode != 0:
+        return False
+    info = json.loads(probe.stdout or "{}")
+    return bool(info.get("streams"))
+
+
+def _sfx_source(sfx_type: str) -> str:
+    sources = {
+        "tech": "sine=frequency=180:sample_rate=48000",
+        "spatial": "sine=frequency=520:sample_rate=48000",
+        "zap": "anoisesrc=color=white:sample_rate=48000",
+        "glitch": "anoisesrc=color=pink:sample_rate=48000",
+    }
+    return sources.get(sfx_type, "")
+
+
+def _build_sfx_track(d: Path, req: "ExportRequest", segments: list[dict], duration: float) -> Optional[Path]:
+    source = _sfx_source(req.sfx_type)
+    if not source:
+        return None
+
+    active_segments = [
+        (float(seg["start"]), max(0.05, float(seg["end"]) - float(seg["start"])))
+        for seg in segments
+        if float(seg["end"]) > float(seg["start"])
+    ]
+    if not active_segments:
+        return None
+
+    volume = max(0.0, min(float(req.sfx_volume), 1.5))
+    out = d / "sfx.wav"
+    cmd = ["ffmpeg", "-y", "-f", "lavfi", "-t", str(duration), "-i", "anullsrc=r=48000:cl=stereo"]
+    for _, seg_duration in active_segments:
+        cmd.extend(["-f", "lavfi", "-t", f"{seg_duration:.3f}", "-i", source])
+
+    chains = []
+    labels = ["[0:a]"]
+    for idx, (start, seg_duration) in enumerate(active_segments, start=1):
+        delay_ms = max(0, int(round(start * 1000)))
+        fade_out_start = max(0.0, seg_duration - 0.08)
+        label = f"[s{idx}]"
+        chains.append(
+            f"[{idx}:a]aformat=channel_layouts=stereo,"
+            f"volume={volume:.3f},"
+            "afade=t=in:st=0:d=0.03,"
+            f"afade=t=out:st={fade_out_start:.3f}:d=0.08,"
+            f"adelay={delay_ms}|{delay_ms}{label}"
+        )
+        labels.append(label)
+
+    filter_complex = ";".join(chains)
+    filter_complex += f";{''.join(labels)}amix=inputs={len(labels)}:duration=first:dropout_transition=0[a]"
+    cmd.extend(["-filter_complex", filter_complex, "-map", "[a]", "-c:a", "pcm_s16le", str(out)])
+    subprocess.run(cmd, check=True, capture_output=True)
+    return out
+
+
 class ExportRequest(BaseModel):
     cell_size: int = 14
     scroll_speed: int = 1
@@ -542,9 +619,12 @@ class ExportRequest(BaseModel):
     char_map: str = "01"
     color_mode: str = "solid"
     effect_type: str = "rain"
+    effect_types: Optional[list[str]] = None
     intensity: float = 1.0
     label: str = "REPROGRAMMING"
     label_background: bool = False
+    sfx_type: str = "none"
+    sfx_volume: float = 0.45
     excluded_frames: list[int] = []  # indices (1-based) a remover do trecho
 
 
@@ -647,12 +727,28 @@ def export_video(video_id: str, req: ExportRequest):
         "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", str(video_only),
     ], check=True, capture_output=True, cwd=str(d))
 
+    original_video = d / "original.mp4"
     final_video = d / "final.mp4"
-    subprocess.run([
-        "ffmpeg", "-y", "-i", str(d / "original.mp4"), "-i", str(video_only),
-        "-map", "1:v", "-map", "0:a?", "-c:v", "copy", "-c:a", "aac",
-        "-shortest", str(final_video),
-    ], check=True, capture_output=True)
+    sfx_track = _build_sfx_track(d, req, segments, duration)
+    if sfx_track and _has_audio_stream(original_video):
+        subprocess.run([
+            "ffmpeg", "-y", "-i", str(original_video), "-i", str(video_only), "-i", str(sfx_track),
+            "-filter_complex", "[0:a][2:a]amix=inputs=2:duration=first:dropout_transition=0[a]",
+            "-map", "1:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac",
+            "-shortest", str(final_video),
+        ], check=True, capture_output=True)
+    elif sfx_track:
+        subprocess.run([
+            "ffmpeg", "-y", "-i", str(video_only), "-i", str(sfx_track),
+            "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac",
+            "-shortest", str(final_video),
+        ], check=True, capture_output=True)
+    else:
+        subprocess.run([
+            "ffmpeg", "-y", "-i", str(original_video), "-i", str(video_only),
+            "-map", "1:v", "-map", "0:a?", "-c:v", "copy", "-c:a", "aac",
+            "-shortest", str(final_video),
+        ], check=True, capture_output=True)
 
     return {"download_url": f"/storage/{video_id}/final.mp4"}
 

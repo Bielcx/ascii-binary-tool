@@ -25,12 +25,10 @@ function hexToBgrString(hex: string): string {
 export default function Editor({
   meta,
   segments,
-  initialPreset,
   onBack,
 }: {
   meta: VideoMeta;
   segments: SegmentRange[];
-  initialPreset?: EffectPreset;
   onBack: () => void;
 }) {
   const [status, setStatus] = useState("extraindo frames do trecho...");
@@ -45,19 +43,21 @@ export default function Editor({
   const [playing, setPlaying] = useState(false);
   const [zoom, setZoom] = useState(1);
 
-  const [cellSize, setCellSize] = useState(initialPreset?.cellSize ?? 14);
+  const [cellSize, setCellSize] = useState(14);
   const [scrollSpeed, setScrollSpeed] = useState(2);
-  const [trailLen, setTrailLen] = useState(initialPreset?.trailLen ?? 14);
-  const [color, setColor] = useState(initialPreset?.color ?? "#46ff00");
+  const [trailLen, setTrailLen] = useState(14);
+  const [color, setColor] = useState("#46ff00");
   const [backgroundColor, setBackgroundColor] = useState("#000000");
-  const [backgroundMode, setBackgroundMode] = useState<"color" | "video" | "image">(initialPreset?.backgroundMode ?? "color");
+  const [backgroundMode, setBackgroundMode] = useState<"color" | "video" | "image">("color");
   const [backgroundFit, setBackgroundFit] = useState<"cover" | "contain" | "stretch">("cover");
-  const [charMap, setCharMap] = useState(initialPreset?.charMap ?? "01");
-  const [colorMode, setColorMode] = useState<"solid" | "source" | "grayscale">(initialPreset?.colorMode ?? "solid");
-  const [effectType, setEffectType] = useState<EffectType>(initialPreset?.effectType ?? "rain");
-  const [intensity, setIntensity] = useState(initialPreset?.intensity ?? 1);
+  const [charMap, setCharMap] = useState("01");
+  const [colorMode, setColorMode] = useState<"solid" | "source" | "grayscale">("solid");
+  const [effectTypes, setEffectTypes] = useState<EffectType[]>(["rain"]);
+  const [intensity, setIntensity] = useState(1);
   const [effectLabel, setEffectLabel] = useState("REPROGRAMMING");
   const [labelBackground, setLabelBackground] = useState(false);
+  const [sfxType, setSfxType] = useState<RenderParams["sfx_type"]>("none");
+  const [sfxVolume, setSfxVolume] = useState(0.45);
   const [previewStep, setPreviewStep] = useState(1);
   const [backgroundImageName, setBackgroundImageName] = useState<string | null>(null);
 
@@ -86,10 +86,13 @@ export default function Editor({
     background_fit: backgroundFit,
     char_map: charMap,
     color_mode: colorMode,
-    effect_type: effectType,
+    effect_type: effectTypes[0] ?? "rain",
+    effect_types: effectTypes,
     intensity,
     label: effectLabel,
     label_background: labelBackground,
+    sfx_type: sfxType,
+    sfx_volume: sfxVolume,
   };
 
   // ---- setup inicial: extrai frames + gera mascaras ----
@@ -177,7 +180,7 @@ export default function Editor({
     ctx.drawImage(img, 0, 0);
     URL.revokeObjectURL(url);
     return true;
-  }, [meta.video_id, cellSize, scrollSpeed, trailLen, color, backgroundColor, backgroundMode, backgroundFit, charMap, colorMode, effectType, intensity, effectLabel, labelBackground]);
+  }, [meta.video_id, cellSize, scrollSpeed, trailLen, color, backgroundColor, backgroundMode, backgroundFit, charMap, colorMode, effectTypes, intensity, effectLabel, labelBackground, sfxType, sfxVolume]);
 
   const drawPreviewMode = useCallback(async () => {
     await drawPreviewFrame(current);
@@ -217,7 +220,7 @@ export default function Editor({
   }
 
   function applyPreset(preset: EffectPreset) {
-    setEffectType(preset.effectType);
+    setEffectTypes([preset.effectType]);
     setCharMap(preset.charMap);
     setColor(preset.color);
     setColorMode(preset.colorMode);
@@ -226,6 +229,29 @@ export default function Editor({
     setTrailLen(preset.trailLen);
     setIntensity(preset.intensity);
   }
+
+  function toggleEffectType(nextEffectType: EffectType) {
+    setEffectTypes((current) => {
+      const next = current.includes(nextEffectType)
+        ? current.filter((effect) => effect !== nextEffectType)
+        : [...current, nextEffectType];
+      return next.length ? next : ["rain"];
+    });
+  }
+
+  function presetIsActive(preset: EffectPreset) {
+    return effectTypes.length === 1
+      && effectTypes[0] === preset.effectType
+      && charMap === preset.charMap
+      && color === preset.color
+      && colorMode === preset.colorMode
+      && backgroundMode === preset.backgroundMode
+      && cellSize === preset.cellSize
+      && trailLen === preset.trailLen
+      && intensity === preset.intensity;
+  }
+
+  const activePreset = EFFECT_PRESETS.find((preset) => presetIsActive(preset));
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -550,46 +576,47 @@ export default function Editor({
         <div className="sidebar">
           <div className="card">
             <div className="section-title">parametros do efeito</div>
-            <p className="helper-text">Fluxo recomendado: escolha um visual, ajuste intensidade/cor, defina o fundo e deixe o resto no ajuste fino.</p>
+            <p className="helper-text">Fluxo recomendado: escolha um estilo base ou combine camadas, ajuste intensidade/cor, defina o fundo e deixe o resto no ajuste fino.</p>
 
             <div className="effect-group">
-              <div className="panel-step">1. escolha o visual</div>
-              <label className="field">visual rapido</label>
-              <div className="preset-grid editor-presets">
+              <div className="panel-step">1. escolha um estilo base</div>
+              <label className="field">preset rapido</label>
+              <select
+                value={activePreset?.id ?? ""}
+                onChange={(e) => {
+                  const preset = EFFECT_PRESETS.find((item) => item.id === e.target.value);
+                  if (preset) applyPreset(preset);
+                }}
+              >
+                {!activePreset && <option value="">customizado</option>}
                 {EFFECT_PRESETS.map((preset, index) => (
-                  <button
-                    key={preset.id}
-                    className={effectType === preset.effectType && charMap === preset.charMap ? "active" : ""}
-                    onClick={() => applyPreset(preset)}
-                    title={`${index + 1}`}
-                  >
-                    <span>{index + 1}. {preset.name}</span>
-                    <small>{preset.hint}</small>
-                  </button>
+                  <option key={preset.id} value={preset.id}>
+                    {index + 1}. {preset.name} - {preset.hint}
+                  </option>
                 ))}
-              </div>
+              </select>
             </div>
 
             <div className="effect-group">
-              <div className="panel-step">2. troque a familia</div>
-              <label className="field">tipo de efeito</label>
+              <div className="panel-step">2. combine camadas</div>
+              <label className="field">efeitos ativos</label>
               <div className="effect-type-grid">
-                <button className={effectType === "rain" ? "active" : ""} onClick={() => setEffectType("rain")}>
+                <button className={effectTypes.includes("rain") ? "active" : ""} onClick={() => toggleEffectType("rain")}>
                   binary rain
                 </button>
-                <button className={effectType === "tracking" ? "active" : ""} onClick={() => setEffectType("tracking")}>
+                <button className={effectTypes.includes("tracking") ? "active" : ""} onClick={() => toggleEffectType("tracking")}>
                   tracking box
                 </button>
-                <button className={effectType === "mesh" ? "active" : ""} onClick={() => setEffectType("mesh")}>
+                <button className={effectTypes.includes("mesh") ? "active" : ""} onClick={() => toggleEffectType("mesh")}>
                   mesh lines
                 </button>
-                <button className={effectType === "blink" ? "active" : ""} onClick={() => setEffectType("blink")}>
+                <button className={effectTypes.includes("blink") ? "active" : ""} onClick={() => toggleEffectType("blink")}>
                   blink pulse
                 </button>
-                <button className={effectType === "reveal" ? "active" : ""} onClick={() => setEffectType("reveal")}>
+                <button className={effectTypes.includes("reveal") ? "active" : ""} onClick={() => toggleEffectType("reveal")}>
                   scan reveal
                 </button>
-                <button className={effectType === "glitch" ? "active" : ""} onClick={() => setEffectType("glitch")}>
+                <button className={effectTypes.includes("glitch") ? "active" : ""} onClick={() => toggleEffectType("glitch")}>
                   glitch panel
                 </button>
               </div>
@@ -609,7 +636,7 @@ export default function Editor({
                 value={intensity}
                 onChange={(e) => setIntensity(+e.target.value)}
               />
-              {(effectType === "tracking" || effectType === "mesh" || effectType === "glitch") && (
+              {(effectTypes.includes("tracking") || effectTypes.includes("mesh") || effectTypes.includes("glitch")) && (
                 <>
                   <input
                     type="text"
@@ -632,7 +659,35 @@ export default function Editor({
             </div>
 
             <div className="effect-group">
-              <div className="panel-step">4. cor dos caracteres</div>
+              <div className="panel-step">4. som local no trecho</div>
+              <label className="field">efeito sonoro</label>
+              <select value={sfxType} onChange={(e) => setSfxType(e.target.value as RenderParams["sfx_type"])}>
+                <option value="none">sem som extra</option>
+                <option value="tech">tech hum</option>
+                <option value="spatial">espacial</option>
+                <option value="zap">raio / energia</option>
+                <option value="glitch">glitch digital</option>
+              </select>
+              {sfxType !== "none" && (
+                <div style={{ marginTop: 10 }}>
+                  <div className="row">
+                    <label className="field">volume do SFX</label>
+                    <span className="value">{Math.round(sfxVolume * 100)}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0.05}
+                    max={1.2}
+                    step={0.05}
+                    value={sfxVolume}
+                    onChange={(e) => setSfxVolume(+e.target.value)}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="effect-group">
+              <div className="panel-step">5. cor dos caracteres</div>
               <label className="field">aparencia dos caracteres</label>
               <div className="segmented-control">
                 <button className={colorMode === "solid" ? "active" : ""} onClick={() => setColorMode("solid")}>
@@ -656,7 +711,7 @@ export default function Editor({
             </div>
 
             <div className="effect-group">
-              <div className="panel-step">5. fundo do efeito</div>
+              <div className="panel-step">6. fundo do efeito</div>
               <label className="field">fundo</label>
               <div className="segmented-control">
                 <button

@@ -133,7 +133,3 @@ export const EFFECT_PRESETS: EffectPreset[] = [
     intensity: 1,
   },
 ];
-
-export function presetById(id: string) {
-  return EFFECT_PRESETS.find((preset) => preset.id === id) ?? EFFECT_PRESETS[0];
-}

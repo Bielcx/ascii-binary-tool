@@ -682,7 +682,7 @@ input[type="range"] {
   width: 100%;
   accent-color: var(--green);
 }
-input[type="number"], input[type="text"] {
+input[type="number"], input[type="text"], select {
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text);
@@ -690,6 +690,11 @@ input[type="number"], input[type="text"] {
   padding: 6px 8px;
   border-radius: 3px;
   width: 100%;
+}
+
+select {
+  min-height: 34px;
+  color: var(--green);
 }
 
 input[type="file"] {
