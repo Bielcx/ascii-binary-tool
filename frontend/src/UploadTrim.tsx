@@ -275,6 +275,27 @@ export default function UploadTrim({
     <div className="card">
       {!file && (
         <div className="upload-lobby">
+          <div
+            className={`dropzone ${dragOver ? "active" : ""}`}
+            onClick={() => inputRef.current?.click()}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragOver(false);
+              if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+            }}
+          >
+            [ arraste um video aqui, ou clique pra escolher ]
+            <input
+              ref={inputRef}
+              type="file"
+              accept="video/*"
+              style={{ display: "none" }}
+              onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+            />
+          </div>
+
           <div className="example-grid">
             {EXAMPLES.map((example) => (
               <button
@@ -297,27 +318,6 @@ export default function UploadTrim({
                 <small>{example.hint}</small>
               </button>
             ))}
-          </div>
-
-          <div
-            className={`dropzone ${dragOver ? "active" : ""}`}
-            onClick={() => inputRef.current?.click()}
-            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragOver(false);
-              if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
-            }}
-          >
-            [ arraste um video aqui, ou clique pra escolher ]
-            <input
-              ref={inputRef}
-              type="file"
-              accept="video/*"
-              style={{ display: "none" }}
-              onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
-            />
           </div>
         </div>
       )}
