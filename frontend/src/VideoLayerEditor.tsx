@@ -21,6 +21,22 @@ const TRACKS = [
   { id: "audio", label: "audio / SFX", type: "audio" },
 ];
 
+const EFFECT_OPTIONS = [
+  { id: "rain", label: "binary" },
+  { id: "tracking", label: "tracking" },
+  { id: "mesh", label: "mesh" },
+  { id: "blink", label: "blink" },
+  { id: "reveal", label: "scan" },
+  { id: "glitch", label: "glitch" },
+];
+
+const SFX_OPTIONS = [
+  { id: "tech", label: "tech hum" },
+  { id: "spatial", label: "espacial" },
+  { id: "zap", label: "raio / energia" },
+  { id: "glitch", label: "glitch digital" },
+];
+
 const LAYER_PRESETS: LayerPreset[] = [
   {
     id: "matrix-silhouette",
@@ -62,6 +78,21 @@ function clamp(value: number, min: number, max: number) {
 
 function makeClipId() {
   return Math.random().toString(36).slice(2, 10);
+}
+
+function paramString(value: TimelineClip["params"][string] | undefined, fallback: string) {
+  return typeof value === "string" ? value : fallback;
+}
+
+function paramNumber(value: TimelineClip["params"][string] | undefined, fallback: number) {
+  return typeof value === "number" ? value : fallback;
+}
+
+function effectList(clip: TimelineClip) {
+  const effects = clip.params.effects;
+  if (Array.isArray(effects)) return effects.map(String);
+  if (typeof effects === "string") return effects.split(",").map((effect) => effect.trim()).filter(Boolean);
+  return ["rain"];
 }
 
 export default function VideoLayerEditor({
@@ -202,6 +233,26 @@ export default function VideoLayerEditor({
   function removeClip(id: string) {
     setClips((current) => current.filter((clip) => clip.id !== id));
     setSelectedClipId((current) => current === id ? null : current);
+  }
+
+  function updateClip(id: string, patch: Partial<TimelineClip>) {
+    setClips((current) => current.map((clip) => (
+      clip.id === id ? { ...clip, ...patch } : clip
+    )));
+  }
+
+  function updateClipParams(id: string, params: TimelineClip["params"]) {
+    setClips((current) => current.map((clip) => (
+      clip.id === id ? { ...clip, params: { ...clip.params, ...params } } : clip
+    )));
+  }
+
+  function toggleEffect(clip: TimelineClip, effectId: string) {
+    const current = effectList(clip);
+    const next = current.includes(effectId)
+      ? current.filter((effect) => effect !== effectId)
+      : [...current, effectId];
+    updateClipParams(clip.id, { effects: (next.length ? next : ["rain"]).join(",") });
   }
 
   function seekTo(time: number) {
@@ -436,8 +487,95 @@ export default function VideoLayerEditor({
             {selectedClip && (
               <div className="selected-layer-card">
                 <div className="section-title compact">clip selecionado</div>
-                <strong>{selectedClip.name}</strong>
+                <label className="field">nome</label>
+                <input
+                  value={selectedClip.name}
+                  onChange={(e) => updateClip(selectedClip.id, { name: e.target.value })}
+                />
                 <span>{selectedClip.start.toFixed(2)}s ate {selectedClip.end.toFixed(2)}s</span>
+
+                {selectedClip.type === "effect" && (
+                  <div className="clip-editor-panel">
+                    <label className="field">efeitos ativos</label>
+                    <div className="clip-effect-grid">
+                      {EFFECT_OPTIONS.map((effect) => (
+                        <button
+                          key={effect.id}
+                          className={effectList(selectedClip).includes(effect.id) ? "active" : ""}
+                          type="button"
+                          onClick={() => toggleEffect(selectedClip, effect.id)}
+                        >
+                          {effect.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="row">
+                      <label className="field">cor</label>
+                      <input
+                        type="color"
+                        value={paramString(selectedClip.params.color, "#46ff00")}
+                        onChange={(e) => updateClipParams(selectedClip.id, { color: e.target.value })}
+                        className="compact-color-input"
+                      />
+                    </div>
+
+                    <label className="field">fundo</label>
+                    <div className="segmented-control compact">
+                      <button
+                        className={paramString(selectedClip.params.background_mode, "color") === "color" ? "active" : ""}
+                        onClick={() => updateClipParams(selectedClip.id, { background_mode: "color" })}
+                      >
+                        cor
+                      </button>
+                      <button
+                        className={paramString(selectedClip.params.background_mode, "color") === "video" ? "active" : ""}
+                        onClick={() => updateClipParams(selectedClip.id, { background_mode: "video" })}
+                      >
+                        video
+                      </button>
+                    </div>
+
+                    {paramString(selectedClip.params.background_mode, "color") === "color" && (
+                      <div className="row">
+                        <label className="field">cor do fundo</label>
+                        <input
+                          type="color"
+                          value={paramString(selectedClip.params.background_color, "#000000")}
+                          onChange={(e) => updateClipParams(selectedClip.id, { background_color: e.target.value })}
+                          className="compact-color-input"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {selectedClip.type === "audio" && (
+                  <div className="clip-editor-panel">
+                    <label className="field">som</label>
+                    <select
+                      value={paramString(selectedClip.params.sfx, "tech")}
+                      onChange={(e) => updateClipParams(selectedClip.id, { sfx: e.target.value })}
+                    >
+                      {SFX_OPTIONS.map((sfx) => (
+                        <option key={sfx.id} value={sfx.id}>{sfx.label}</option>
+                      ))}
+                    </select>
+                    <div className="row">
+                      <label className="field">volume</label>
+                      <span className="value">{Math.round(paramNumber(selectedClip.params.volume, 0.45) * 100)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0.05}
+                      max={1.2}
+                      step={0.05}
+                      value={paramNumber(selectedClip.params.volume, 0.45)}
+                      onChange={(e) => updateClipParams(selectedClip.id, { volume: +e.target.value })}
+                    />
+                  </div>
+                )}
+
                 <div className="selected-layer-actions">
                   {selectedClip.type === "effect" && meta && file && (
                     <button className="ghost" onClick={() => onOpenMaskEditor(meta, file, [{ start: selectedClip.start, end: selectedClip.end }])}>

@@ -665,6 +665,49 @@ h1 {
   margin-top: 4px;
 }
 
+.clip-editor-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.clip-effect-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.clip-effect-grid button {
+  padding: 7px 8px;
+  font-size: 10px;
+}
+
+.clip-effect-grid button.active,
+.segmented-control.compact button.active {
+  border-color: var(--green);
+  background: rgba(70, 255, 90, 0.13);
+  color: var(--green);
+}
+
+.segmented-control.compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.segmented-control.compact button {
+  padding: 7px 8px;
+  font-size: 10px;
+}
+
+.compact-color-input {
+  width: 44px;
+  height: 30px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  background: #000;
+}
+
 button.danger {
   border-color: rgba(255, 88, 88, 0.5);
   color: #ff8585;
