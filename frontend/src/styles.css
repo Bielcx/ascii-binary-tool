@@ -455,6 +455,41 @@ h1 {
   pointer-events: none;
 }
 
+.layer-range-handle {
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  z-index: 4;
+  width: 20px;
+  min-width: 20px;
+  padding: 0;
+  overflow: visible;
+  color: transparent;
+  border: 1px solid var(--amber);
+  background: #151007;
+  box-shadow: 0 0 12px rgba(255, 180, 84, 0.34);
+  transform: translateX(-50%);
+  cursor: ew-resize;
+}
+
+.layer-range-handle::after {
+  content: attr(aria-label);
+  position: absolute;
+  top: -19px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.layer-range-handle.end {
+  border-color: var(--green);
+  box-shadow: 0 0 12px rgba(70, 255, 90, 0.34);
+}
+
 .layer-tracks {
   display: grid;
   gap: 6px;
@@ -501,6 +536,11 @@ h1 {
   font-size: 10px;
 }
 
+.layer-clip.active {
+  border-color: #fff;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.45), 0 0 14px rgba(70, 255, 90, 0.24);
+}
+
 .layer-clip.clip-text,
 .layer-clip.clip-image {
   border-color: rgba(255, 180, 84, 0.65);
@@ -519,15 +559,35 @@ h1 {
   gap: 10px;
 }
 
-.quick-layer-buttons {
+.layer-preset-list {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
-.quick-layer-buttons button {
-  padding: 7px 6px;
-  font-size: 10px;
+.layer-preset {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  text-align: left;
+  border-color: var(--border);
+}
+
+.layer-preset:hover:not(:disabled) {
+  border-color: var(--green);
+  background: rgba(70, 255, 90, 0.08);
+}
+
+.layer-preset span {
+  color: var(--green);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.layer-preset small {
+  color: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .clip-list {
@@ -537,12 +597,19 @@ h1 {
 
 .clip-list-item {
   display: flex;
+  width: 100%;
   justify-content: space-between;
   align-items: center;
   gap: 10px;
   padding: 8px;
+  text-align: left;
   border: 1px solid var(--border);
   background: rgba(0, 0, 0, 0.18);
+}
+
+.clip-list-item.active {
+  border-color: var(--green);
+  background: rgba(70, 255, 90, 0.1);
 }
 
 .clip-list-item div {
@@ -567,6 +634,40 @@ h1 {
 .clip-list-item span {
   color: var(--text-dim);
   font-size: 11px;
+}
+
+.empty-layer-state,
+.selected-layer-card {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.empty-layer-state strong,
+.selected-layer-card strong {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.empty-layer-state span,
+.selected-layer-card span {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.selected-layer-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+button.danger {
+  border-color: rgba(255, 88, 88, 0.5);
+  color: #ff8585;
 }
 
 .project-json {

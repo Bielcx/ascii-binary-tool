@@ -5,11 +5,55 @@ import type { SegmentRange, TimelineClip, TimelineLayerType, TimelineProject, Vi
 
 type LayerType = TimelineLayerType;
 
+interface LayerPreset {
+  id: string;
+  name: string;
+  hint: string;
+  type: LayerType;
+  track: string;
+  params: TimelineClip["params"];
+}
+
 const TRACKS = [
   { id: "base", label: "video base", type: "video" },
   { id: "effects", label: "efeitos", type: "effect" },
   { id: "overlays", label: "texto / imagem", type: "overlay" },
   { id: "audio", label: "audio / SFX", type: "audio" },
+];
+
+const LAYER_PRESETS: LayerPreset[] = [
+  {
+    id: "matrix-silhouette",
+    name: "Matrix silhouette",
+    hint: "binario verde na mascara com tracking",
+    type: "effect",
+    track: "effects",
+    params: { effects: "rain,tracking", color: "#46ff00", background_mode: "color", background_color: "#000000" },
+  },
+  {
+    id: "tracking-hud",
+    name: "Tracking HUD",
+    hint: "caixa e label de deteccao",
+    type: "effect",
+    track: "effects",
+    params: { effects: "tracking,mesh", color: "#46ff00", background_mode: "video" },
+  },
+  {
+    id: "glitch-scan",
+    name: "Glitch scan",
+    hint: "painel digital com cortes",
+    type: "effect",
+    track: "effects",
+    params: { effects: "rain,glitch,blink", color: "#46ff00", background_mode: "video" },
+  },
+  {
+    id: "tech-sfx",
+    name: "Tech SFX",
+    hint: "som sintetico no trecho",
+    type: "audio",
+    track: "audio",
+    params: { sfx: "tech", volume: 0.45 },
+  },
 ];
 
 function clamp(value: number, min: number, max: number) {
@@ -41,9 +85,9 @@ export default function VideoLayerEditor({
   const [currentTime, setCurrentTime] = useState(0);
   const [rangeStart, setRangeStart] = useState(0);
   const [rangeEnd, setRangeEnd] = useState(Math.min(1, initialMeta?.duration ?? 1));
-  const [selectedType, setSelectedType] = useState<LayerType>("effect");
-  const [clipName, setClipName] = useState("binary rain");
   const [clips, setClips] = useState<TimelineClip[]>([]);
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
+  const [segmentPlaying, setSegmentPlaying] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
 
@@ -70,6 +114,7 @@ export default function VideoLayerEditor({
       setRangeEnd(Math.min(1, nextMeta.duration));
       setCurrentTime(0);
       setClips([]);
+      setSelectedClipId(null);
       onVideoLoaded?.(nextMeta, nextFile);
     } catch (e) {
       alert("Erro no upload: " + e);
@@ -116,41 +161,78 @@ export default function VideoLayerEditor({
     window.addEventListener("pointerup", onUp);
   }
 
-  function addClip(type: LayerType = selectedType) {
-    if (!meta || rangeEnd <= rangeStart) return;
-    const track = type === "audio" ? "audio" : type === "effect" ? "effects" : "overlays";
-    const defaultNames: Record<LayerType, string> = {
-      effect: "binary rain",
-      text: "texto",
-      image: "imagem",
-      audio: "tech SFX",
+  function beginHandleDrag(handle: "start" | "end", e: ReactPointerEvent<HTMLButtonElement>) {
+    if (!meta) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const track = e.currentTarget.closest(".layer-time-ruler") as HTMLElement | null;
+    if (!track) return;
+
+    const onMove = (event: PointerEvent) => {
+      const time = timeFromPointer(event.clientX, track);
+      if (handle === "start") setDraftRange(time, rangeEnd);
+      else setDraftRange(rangeStart, time);
     };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
+
+  function addPreset(preset: LayerPreset) {
+    if (!meta || rangeEnd <= rangeStart) return;
+    const id = makeClipId();
     setClips((current) => [
       ...current,
       {
-        id: makeClipId(),
-        type,
-        track,
+        id,
+        type: preset.type,
+        track: preset.track,
         start: rangeStart,
         end: rangeEnd,
-        name: clipName.trim() || defaultNames[type],
-        params: type === "effect"
-          ? { effects: "rain,tracking", color: "#46ff00" }
-          : type === "audio"
-            ? { sfx: "tech", volume: 0.45 }
-            : {},
+        name: preset.name,
+        params: preset.params,
       },
     ]);
+    setSelectedClipId(id);
   }
 
   function removeClip(id: string) {
     setClips((current) => current.filter((clip) => clip.id !== id));
+    setSelectedClipId((current) => current === id ? null : current);
   }
 
   function seekTo(time: number) {
     const video = videoRef.current;
     if (video) video.currentTime = time;
     setCurrentTime(time);
+  }
+
+  function playSelectedRange() {
+    const video = videoRef.current;
+    if (!video || !meta) return;
+    if (segmentPlaying) {
+      video.pause();
+      setSegmentPlaying(false);
+      return;
+    }
+    video.currentTime = rangeStart;
+    setCurrentTime(rangeStart);
+    setSegmentPlaying(true);
+    void video.play().catch(() => setSegmentPlaying(false));
+  }
+
+  function handleVideoTime(video: HTMLVideoElement) {
+    const time = Number(video.currentTime.toFixed(2));
+    setCurrentTime(time);
+    if (segmentPlaying && time >= rangeEnd - 0.02) {
+      video.pause();
+      video.currentTime = rangeStart;
+      setCurrentTime(rangeStart);
+      setSegmentPlaying(false);
+    }
   }
 
   const timelineStyle = meta ? ({
@@ -167,6 +249,8 @@ export default function VideoLayerEditor({
       clips: clips.filter((clip) => clip.track === track.id),
     })),
   } : null;
+
+  const selectedClip = clips.find((clip) => clip.id === selectedClipId) ?? null;
 
   async function handleTimelineExport() {
     if (!meta || !project) return;
@@ -188,7 +272,7 @@ export default function VideoLayerEditor({
         <div>
           <button className="ghost" onClick={onBack}>voltar ao lobby</button>
           <h2>editor de video / camadas</h2>
-          <p className="helper-text">MVP da timeline: escolha um intervalo, adicione camadas e mande um trecho para o editor de mascara quando precisar refinar a silhueta.</p>
+          <p className="helper-text">Fluxo rapido: carregue um video, selecione o trecho na timeline, escolha um preset e exporte.</p>
         </div>
         {meta && file && (
           <button
@@ -233,20 +317,39 @@ export default function VideoLayerEditor({
               src={videoUrl}
               controls
               playsInline
-              onTimeUpdate={(e) => setCurrentTime(Number(e.currentTarget.currentTime.toFixed(2)))}
+              onTimeUpdate={(e) => handleVideoTime(e.currentTarget)}
               onSeeked={(e) => setCurrentTime(Number(e.currentTarget.currentTime.toFixed(2)))}
+              onPause={() => setSegmentPlaying(false)}
               className="layer-preview"
             />
 
             <div className="timeline-panel layer-timeline-panel">
               <div className="timeline-head">
-                <span>{meta.width}x{meta.height} - {meta.fps.toFixed(0)}fps - {meta.duration.toFixed(2)}s</span>
+                <span>1. selecione o trecho</span>
                 <strong>{rangeStart.toFixed(2)}s - {rangeEnd.toFixed(2)}s</strong>
               </div>
 
               <div className="layer-time-ruler" style={timelineStyle} onPointerDown={beginRangeDrag}>
                 <div className="layer-draft-range" />
                 <div className="timeline-playhead" />
+                <button
+                  className="layer-range-handle start"
+                  type="button"
+                  style={{ left: `${(rangeStart / meta.duration) * 100}%` }}
+                  onPointerDown={(e) => beginHandleDrag("start", e)}
+                  aria-label="inicio do trecho"
+                >
+                  inicio
+                </button>
+                <button
+                  className="layer-range-handle end"
+                  type="button"
+                  style={{ left: `${(rangeEnd / meta.duration) * 100}%` }}
+                  onPointerDown={(e) => beginHandleDrag("end", e)}
+                  aria-label="fim do trecho"
+                >
+                  fim
+                </button>
               </div>
 
               <div className="layer-tracks">
@@ -257,7 +360,7 @@ export default function VideoLayerEditor({
                       {clips.filter((clip) => clip.track === track.id).map((clip) => (
                         <button
                           key={clip.id}
-                          className={`layer-clip clip-${clip.type}`}
+                          className={`layer-clip clip-${clip.type} ${selectedClipId === clip.id ? "active" : ""}`}
                           style={{
                             left: `${(clip.start / meta.duration) * 100}%`,
                             width: `${Math.max(1.5, ((clip.end - clip.start) / meta.duration) * 100)}%`,
@@ -265,6 +368,7 @@ export default function VideoLayerEditor({
                           onClick={() => {
                             setDraftRange(clip.start, clip.end);
                             seekTo(clip.start);
+                            setSelectedClipId(clip.id);
                           }}
                           title={`${clip.start.toFixed(2)}s - ${clip.end.toFixed(2)}s`}
                         >
@@ -277,6 +381,7 @@ export default function VideoLayerEditor({
               </div>
 
               <div className="timeline-actions">
+                <button className="ghost" onClick={playSelectedRange}>{segmentPlaying ? "pausar trecho" : "play do trecho"}</button>
                 <button className="ghost" onClick={() => seekTo(rangeStart)}>ir inicio</button>
                 <button className="ghost" onClick={() => seekTo(rangeEnd)}>ir fim</button>
                 <button className="ghost" onClick={() => setRangeStart(Number(currentTime.toFixed(2)))}>marcar inicio</button>
@@ -286,48 +391,69 @@ export default function VideoLayerEditor({
           </div>
 
           <div className="card layer-sidebar">
-            <div className="section-title">nova camada</div>
-            <label className="field">tipo</label>
-            <select value={selectedType} onChange={(e) => setSelectedType(e.target.value as LayerType)}>
-              <option value="effect">efeito</option>
-              <option value="text">texto</option>
-              <option value="image">imagem</option>
-              <option value="audio">audio / SFX</option>
-            </select>
-
-            <label className="field">nome</label>
-            <input value={clipName} onChange={(e) => setClipName(e.target.value)} />
-
-            <button className="primary" style={{ width: "100%", marginTop: 12 }} onClick={() => addClip()}>
-              adicionar camada
-            </button>
-
-            <div className="quick-layer-buttons">
-              <button className="ghost" onClick={() => { setClipName("binary rain"); addClip("effect"); }}>binary</button>
-              <button className="ghost" onClick={() => { setClipName("tracking label"); addClip("effect"); }}>tracking</button>
-              <button className="ghost" onClick={() => { setClipName("tech SFX"); addClip("audio"); }}>SFX</button>
+            <div className="section-title">2. aplique um preset</div>
+            <p className="status-line">Use o trecho selecionado na timeline. Depois clique no clip para revisar ou remover.</p>
+            <div className="layer-preset-list">
+              {LAYER_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  className={`layer-preset preset-${preset.type}`}
+                  type="button"
+                  onClick={() => addPreset(preset)}
+                >
+                  <span>{preset.name}</span>
+                  <small>{preset.hint}</small>
+                </button>
+              ))}
             </div>
 
             <div className="section-title compact">camadas</div>
             <div className="clip-list">
-              {clips.length === 0 && <p className="status-line">nenhuma camada criada ainda.</p>}
+              {clips.length === 0 && (
+                <div className="empty-layer-state">
+                  <strong>Nenhum efeito aplicado</strong>
+                  <span>Selecione um trecho e clique em um preset acima.</span>
+                </div>
+              )}
               {clips.map((clip) => (
-                <div className="clip-list-item" key={clip.id}>
+                <button
+                  className={`clip-list-item ${selectedClipId === clip.id ? "active" : ""}`}
+                  key={clip.id}
+                  onClick={() => {
+                    setSelectedClipId(clip.id);
+                    setDraftRange(clip.start, clip.end);
+                    seekTo(clip.start);
+                  }}
+                >
                   <div>
                     <strong>{clip.name}</strong>
                     <span>{clip.type} - {clip.start.toFixed(2)}s ate {clip.end.toFixed(2)}s</span>
                   </div>
-                  <button className="ghost" onClick={() => removeClip(clip.id)}>remover</button>
-                </div>
+                </button>
               ))}
             </div>
 
-            <div className="section-title compact">exportar timeline</div>
-            <p className="status-line">Neste MVP, clips de efeito e audio/SFX renderizam. Texto/imagem ficam salvos no modelo para a proxima etapa.</p>
+            {selectedClip && (
+              <div className="selected-layer-card">
+                <div className="section-title compact">clip selecionado</div>
+                <strong>{selectedClip.name}</strong>
+                <span>{selectedClip.start.toFixed(2)}s ate {selectedClip.end.toFixed(2)}s</span>
+                <div className="selected-layer-actions">
+                  {selectedClip.type === "effect" && meta && file && (
+                    <button className="ghost" onClick={() => onOpenMaskEditor(meta, file, [{ start: selectedClip.start, end: selectedClip.end }])}>
+                      editar mascara
+                    </button>
+                  )}
+                  <button className="ghost danger" onClick={() => removeClip(selectedClip.id)}>remover</button>
+                </div>
+              </div>
+            )}
+
+            <div className="section-title compact">3. exporte</div>
             <button
               className="primary"
               style={{ width: "100%" }}
-              disabled={!meta || exporting}
+              disabled={!meta || exporting || clips.length === 0}
               onClick={handleTimelineExport}
             >
               {exporting ? "renderizando..." : "exportar camadas"}
