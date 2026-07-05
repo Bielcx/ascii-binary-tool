@@ -1,19 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
-import { uploadVideo } from "./api";
-import type { SegmentRange, VideoMeta } from "./api";
+import { exportTimeline, uploadVideo } from "./api";
+import type { SegmentRange, TimelineClip, TimelineLayerType, TimelineProject, VideoMeta } from "./api";
 
-type LayerType = "effect" | "text" | "image" | "audio";
-
-interface TimelineClip {
-  id: string;
-  type: LayerType;
-  track: string;
-  start: number;
-  end: number;
-  name: string;
-  params: Record<string, string | number | boolean>;
-}
+type LayerType = TimelineLayerType;
 
 const TRACKS = [
   { id: "base", label: "video base", type: "video" },
@@ -54,6 +44,8 @@ export default function VideoLayerEditor({
   const [selectedType, setSelectedType] = useState<LayerType>("effect");
   const [clipName, setClipName] = useState("binary rain");
   const [clips, setClips] = useState<TimelineClip[]>([]);
+  const [exporting, setExporting] = useState(false);
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -167,7 +159,7 @@ export default function VideoLayerEditor({
     "--playhead": `${(currentTime / meta.duration) * 100}%`,
   } as CSSProperties) : undefined;
 
-  const project = meta ? {
+  const project: TimelineProject | null = meta ? {
     video_id: meta.video_id,
     duration: meta.duration,
     tracks: TRACKS.map((track) => ({
@@ -175,6 +167,20 @@ export default function VideoLayerEditor({
       clips: clips.filter((clip) => clip.track === track.id),
     })),
   } : null;
+
+  async function handleTimelineExport() {
+    if (!meta || !project) return;
+    setExporting(true);
+    setDownloadUrl(null);
+    try {
+      const url = await exportTimeline(meta.video_id, project);
+      setDownloadUrl(url);
+    } catch (e) {
+      alert("Erro no export da timeline: " + e);
+    } finally {
+      setExporting(false);
+    }
+  }
 
   return (
     <div className="layer-editor">
@@ -315,6 +321,25 @@ export default function VideoLayerEditor({
                 </div>
               ))}
             </div>
+
+            <div className="section-title compact">exportar timeline</div>
+            <p className="status-line">Neste MVP, clips de efeito e audio/SFX renderizam. Texto/imagem ficam salvos no modelo para a proxima etapa.</p>
+            <button
+              className="primary"
+              style={{ width: "100%" }}
+              disabled={!meta || exporting}
+              onClick={handleTimelineExport}
+            >
+              {exporting ? "renderizando..." : "exportar camadas"}
+            </button>
+            {downloadUrl && (
+              <>
+                <video src={downloadUrl} controls className="layer-export-preview" />
+                <a className="download-link" href={downloadUrl} target="_blank" rel="noreferrer">
+                  baixar timeline
+                </a>
+              </>
+            )}
 
             <details className="advanced-panel">
               <summary>modelo do projeto</summary>

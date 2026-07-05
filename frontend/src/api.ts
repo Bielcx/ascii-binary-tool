@@ -33,6 +33,27 @@ export interface RenderParams {
   sfx_volume: number;
 }
 
+export type TimelineLayerType = "effect" | "text" | "image" | "audio";
+
+export interface TimelineClip {
+  id: string;
+  type: TimelineLayerType;
+  track: string;
+  start: number;
+  end: number;
+  name: string;
+  params: Record<string, string | number | boolean | string[]>;
+}
+
+export interface TimelineProject {
+  video_id: string;
+  duration: number;
+  tracks: Array<{
+    id: string;
+    clips: TimelineClip[];
+  }>;
+}
+
 export async function uploadVideo(file: File): Promise<VideoMeta> {
   const form = new FormData();
   form.append("file", file);
@@ -127,6 +148,17 @@ export async function exportVideo(
     body: JSON.stringify({ ...params, excluded_frames: excludedFrames }),
   });
   if (!res.ok) throw new Error("falha no export");
+  const data = await res.json();
+  return `${BASE}${data.download_url}`;
+}
+
+export async function exportTimeline(videoId: string, project: TimelineProject): Promise<string> {
+  const res = await fetch(`${BASE}/api/videos/${videoId}/timeline/export`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(project),
+  });
+  if (!res.ok) throw new Error("falha no export da timeline");
   const data = await res.json();
   return `${BASE}${data.download_url}`;
 }

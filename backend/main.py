@@ -22,7 +22,7 @@ import shutil
 import subprocess
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import cv2
 import numpy as np
@@ -30,7 +30,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from segmentation import segment_frames
 from render import RainRenderer
@@ -119,12 +119,8 @@ def _normalize_segments(req: SegmentRequest, duration: float) -> list[dict[str, 
     return segments
 
 
-@app.post("/api/videos/{video_id}/segment")
-def extract_segment(video_id: str, req: SegmentRequest):
-    d = video_dir(video_id)
-    meta = json.loads((d / "meta.json").read_text())
-    segments = _normalize_segments(req, float(meta.get("duration", 0)))
-
+def _extract_segments_to_frames(d: Path, meta: dict[str, Any],
+                                segments: list[dict[str, float]]) -> dict[str, Any]:
     frames_dir = d / "frames"
     frames_dir.mkdir(exist_ok=True)
     for f in frames_dir.glob("*.png"):
@@ -165,7 +161,18 @@ def extract_segment(video_id: str, req: SegmentRequest):
     (d / "meta.json").write_text(json.dumps(meta))
 
     return {"frame_count": frame_count,
-            "frame_urls": [f"/storage/{video_id}/frames/f_{i+1:03d}.png" for i in range(frame_count)]}
+            "segments": normalized}
+
+
+@app.post("/api/videos/{video_id}/segment")
+def extract_segment(video_id: str, req: SegmentRequest):
+    d = video_dir(video_id)
+    meta = json.loads((d / "meta.json").read_text())
+    segments = _normalize_segments(req, float(meta.get("duration", 0)))
+    result = _extract_segments_to_frames(d, meta, segments)
+
+    return {"frame_count": result["frame_count"],
+            "frame_urls": [f"/storage/{video_id}/frames/f_{i+1:03d}.png" for i in range(result["frame_count"])]}
 
 
 # ---------------------------------------------------------------- masks (geracao automatica)
@@ -567,8 +574,10 @@ def _sfx_source(sfx_type: str) -> str:
     return sources.get(sfx_type, "")
 
 
-def _build_sfx_track(d: Path, req: "ExportRequest", segments: list[dict], duration: float) -> Optional[Path]:
-    source = _sfx_source(req.sfx_type)
+def _build_sfx_track(d: Path, sfx_type: str, sfx_volume: float,
+                     segments: list[dict], duration: float,
+                     filename: str = "sfx.wav") -> Optional[Path]:
+    source = _sfx_source(sfx_type)
     if not source:
         return None
 
@@ -580,8 +589,8 @@ def _build_sfx_track(d: Path, req: "ExportRequest", segments: list[dict], durati
     if not active_segments:
         return None
 
-    volume = max(0.0, min(float(req.sfx_volume), 1.5))
-    out = d / "sfx.wav"
+    volume = max(0.0, min(float(sfx_volume), 1.5))
+    out = d / filename
     cmd = ["ffmpeg", "-y", "-f", "lavfi", "-t", str(duration), "-i", "anullsrc=r=48000:cl=stereo"]
     for _, seg_duration in active_segments:
         cmd.extend(["-f", "lavfi", "-t", f"{seg_duration:.3f}", "-i", source])
@@ -626,6 +635,97 @@ class ExportRequest(BaseModel):
     sfx_type: str = "none"
     sfx_volume: float = 0.45
     excluded_frames: list[int] = []  # indices (1-based) a remover do trecho
+
+
+class TimelineClipRequest(BaseModel):
+    id: str
+    type: str
+    track: str
+    start: float
+    end: float
+    name: str = ""
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class TimelineTrackRequest(BaseModel):
+    id: str
+    clips: list[TimelineClipRequest] = Field(default_factory=list)
+
+
+class TimelineExportRequest(BaseModel):
+    duration: Optional[float] = None
+    tracks: list[TimelineTrackRequest] = Field(default_factory=list)
+
+
+def _timeline_clips(req: TimelineExportRequest, clip_type: str) -> list[TimelineClipRequest]:
+    clips = [clip for track in req.tracks for clip in track.clips if clip.type == clip_type]
+    return sorted(clips, key=lambda clip: clip.start)
+
+
+def _validate_clip_segments(clips: list[TimelineClipRequest], duration: float) -> list[dict[str, float]]:
+    segments = []
+    for clip in clips:
+        start = float(clip.start)
+        end = float(clip.end)
+        if start < 0 or end <= start or end > duration:
+            raise HTTPException(400, "clip de timeline invalido")
+        segments.append({"start": start, "end": end})
+    for prev, cur in zip(segments, segments[1:]):
+        if cur["start"] < prev["end"]:
+            raise HTTPException(400, "clips de efeito ainda nao podem se sobrepor")
+    return segments
+
+
+def _hex_to_bgr_string(value: str, fallback: str = "0,255,70") -> str:
+    if not value.startswith("#") or len(value) != 7:
+        return fallback
+    try:
+        r = int(value[1:3], 16)
+        g = int(value[3:5], 16)
+        b = int(value[5:7], 16)
+    except ValueError:
+        return fallback
+    return f"{b},{g},{r}"
+
+
+def _render_request_from_clip(clip: TimelineClipRequest) -> ExportRequest:
+    params = clip.params or {}
+    effects = params.get("effects", "rain,tracking")
+    if isinstance(effects, str):
+        effect_types = [effect.strip() for effect in effects.split(",") if effect.strip()]
+    elif isinstance(effects, list):
+        effect_types = [str(effect) for effect in effects]
+    else:
+        effect_types = ["rain"]
+
+    color = str(params.get("color", "#46ff00"))
+    return ExportRequest(
+        color=_hex_to_bgr_string(color),
+        effect_type=effect_types[0] if effect_types else "rain",
+        effect_types=effect_types or ["rain"],
+        background_mode=str(params.get("background_mode", "color")),
+        background_color=_hex_to_bgr_string(str(params.get("background_color", "#000000")), "0,0,0"),
+        sfx_type="none",
+    )
+
+
+def _copy_or_mix_sfx(d: Path, base_video: Path, sfx_track: Optional[Path], out: Path) -> None:
+    if not sfx_track:
+        shutil.copyfile(base_video, out)
+        return
+    if _has_audio_stream(base_video):
+        subprocess.run([
+            "ffmpeg", "-y", "-i", str(base_video), "-i", str(sfx_track),
+            "-filter_complex", "[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=0[a]",
+            "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac",
+            "-shortest", str(out),
+        ], check=True, capture_output=True)
+    else:
+        subprocess.run([
+            "ffmpeg", "-y", "-i", str(base_video), "-i", str(sfx_track),
+            "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac",
+            "-shortest", str(out),
+        ], check=True, capture_output=True)
 
 
 @app.post("/api/videos/{video_id}/export")
@@ -729,7 +829,7 @@ def export_video(video_id: str, req: ExportRequest):
 
     original_video = d / "original.mp4"
     final_video = d / "final.mp4"
-    sfx_track = _build_sfx_track(d, req, segments, duration)
+    sfx_track = _build_sfx_track(d, req.sfx_type, req.sfx_volume, segments, duration)
     if sfx_track and _has_audio_stream(original_video):
         subprocess.run([
             "ffmpeg", "-y", "-i", str(original_video), "-i", str(video_only), "-i", str(sfx_track),
@@ -751,6 +851,52 @@ def export_video(video_id: str, req: ExportRequest):
         ], check=True, capture_output=True)
 
     return {"download_url": f"/storage/{video_id}/final.mp4"}
+
+
+@app.post("/api/videos/{video_id}/timeline/export")
+def export_timeline(video_id: str, req: TimelineExportRequest):
+    d = video_dir(video_id)
+    meta = json.loads((d / "meta.json").read_text())
+    duration = float(meta.get("duration") or req.duration or 0)
+    if duration <= 0:
+        raise HTTPException(400, "duracao do video invalida")
+
+    effect_clips = _timeline_clips(req, "effect")
+    audio_clips = _timeline_clips(req, "audio")
+
+    if effect_clips:
+        effect_segments = _validate_clip_segments(effect_clips, duration)
+        _extract_segments_to_frames(d, meta, effect_segments)
+        generate_masks(video_id)
+        render_req = _render_request_from_clip(effect_clips[0])
+        export_video(video_id, render_req)
+        base_video = d / "final.mp4"
+    else:
+        base_video = d / "original.mp4"
+
+    audio_segments = []
+    for clip in audio_clips:
+        start = float(clip.start)
+        end = float(clip.end)
+        if start < 0 or end <= start or end > duration:
+            raise HTTPException(400, "clip de audio invalido")
+        audio_segments.append({"start": start, "end": end})
+
+    sfx_track = None
+    if audio_segments:
+        audio_params = audio_clips[0].params or {}
+        sfx_track = _build_sfx_track(
+            d,
+            str(audio_params.get("sfx", "tech")),
+            float(audio_params.get("volume", 0.45)),
+            audio_segments,
+            duration,
+            filename="timeline_sfx.wav",
+        )
+
+    final_layers = d / "final_layers.mp4"
+    _copy_or_mix_sfx(d, base_video, sfx_track, final_layers)
+    return {"download_url": f"/storage/{video_id}/final_layers.mp4"}
 
 
 @app.get("/api/videos/{video_id}/download")
