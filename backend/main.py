@@ -728,38 +728,33 @@ def _copy_or_mix_sfx(d: Path, base_video: Path, sfx_track: Optional[Path], out: 
         ], check=True, capture_output=True)
 
 
-@app.post("/api/videos/{video_id}/export")
-def export_video(video_id: str, req: ExportRequest):
-    d = video_dir(video_id)
-    meta = json.loads((d / "meta.json").read_text())
-    frames_dir = d / "frames"
-    masks_dir = d / "masks"
-
-    frame_paths = sorted(frames_dir.glob("*.png"))
-    if not frame_paths:
-        raise HTTPException(400, "extraia o trecho antes de exportar")
-
+def _render_frames_to_dir(video_id: str, d: Path, frame_paths: list[Path], masks_dir: Path,
+                          request_for_frame) -> Path:
     rendered_dir = d / "rendered"
     rendered_dir.mkdir(exist_ok=True)
     for f in rendered_dir.glob("*.png"):
         f.unlink()
 
-    color = _parse_bgr(req.color)
-    background_color = _parse_bgr(req.background_color)
-    renderer = None
-    excluded = set(req.excluded_frames)
-    for out_idx, p in enumerate(frame_paths):
+    for p in frame_paths:
         frame_num = int(p.stem.split("_")[1])
+        req = request_for_frame(frame_num)
         mask_path = masks_dir / f"f_{frame_num:03d}.png"
         mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
         if mask is None:
             raise HTTPException(400, "gere as mascaras antes de exportar")
         h, w = mask.shape
-        if renderer is None:
-            renderer = _get_renderer(video_id, w, h, req.cell_size, req.char_map)
+        renderer = _get_renderer(video_id, w, h, req.cell_size, req.char_map)
+        color = _parse_bgr(req.color)
+        background_color = _parse_bgr(req.background_color)
         rendered = _render_effect_frame(d, renderer, mask, frame_num, p, req, color, background_color)
-        cv2.imwrite(str(rendered_dir / f"f_{out_idx+1:03d}.png"), rendered)
+        cv2.imwrite(str(rendered_dir / f"f_{frame_num:03d}.png"), rendered)
 
+    return rendered_dir
+
+
+def _assemble_video_only(d: Path, meta: dict[str, Any], frame_paths: list[Path],
+                         rendered_dir: Path, duration: float, excluded_frames: set[int],
+                         output_name: str = "video_only.mp4", prefix: str = "") -> Path:
     fps = meta["fps"]
     segments = meta.get("segments") or [{
         "start": meta["segment_start"],
@@ -767,7 +762,6 @@ def export_video(video_id: str, req: ExportRequest):
         "first_frame": 1,
         "frame_count": len(frame_paths),
     }]
-    duration = meta.get("duration", segments[-1]["end"])
 
     EPS = 1e-3
     parts = []
@@ -776,7 +770,7 @@ def export_video(video_id: str, req: ExportRequest):
     def make_normal_clip(start: float, end: float, name: str) -> Optional[Path]:
         if end <= start + EPS:
             return None
-        out = d / name
+        out = d / f"{prefix}{name}"
         subprocess.run([
             "ffmpeg", "-y", "-ss", str(start), "-i", str(d / "original.mp4"),
             "-t", str(end - start), "-c:v", "libx264", "-crf", "15", "-an", str(out)
@@ -788,7 +782,7 @@ def export_video(video_id: str, req: ExportRequest):
         if normal:
             parts.append(normal)
 
-        seq_dir = d / f"rendered_segment_{seg_idx:02d}"
+        seq_dir = d / f"{prefix}rendered_segment_{seg_idx:02d}"
         if seq_dir.exists():
             shutil.rmtree(seq_dir)
         seq_dir.mkdir(exist_ok=True)
@@ -796,7 +790,7 @@ def export_video(video_id: str, req: ExportRequest):
         first = int(seg["first_frame"])
         count = int(seg["frame_count"])
         for frame_num in range(first, first + count):
-            if frame_num in excluded:
+            if frame_num in excluded_frames:
                 continue
             src = rendered_dir / f"f_{frame_num:03d}.png"
             if src.exists():
@@ -804,7 +798,7 @@ def export_video(video_id: str, req: ExportRequest):
                 shutil.copyfile(src, seq_dir / f"f_{written:03d}.png")
 
         if written:
-            segment_video = d / f"segment_rendered_{seg_idx:02d}.mp4"
+            segment_video = d / f"{prefix}segment_rendered_{seg_idx:02d}.mp4"
             subprocess.run([
                 "ffmpeg", "-y", "-framerate", str(fps), "-i", str(seq_dir / "f_%03d.png"),
                 "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", str(segment_video),
@@ -819,17 +813,18 @@ def export_video(video_id: str, req: ExportRequest):
     if not parts:
         raise HTTPException(400, "nenhum trecho para exportar")
 
-    concat_list = d / "concat.txt"
+    concat_list = d / f"{prefix}concat.txt"
     concat_list.write_text("".join(f"file '{p.name}'\n" for p in parts))
-    video_only = d / "video_only.mp4"
+    video_only = d / output_name
     subprocess.run([
         "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list),
         "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", str(video_only),
     ], check=True, capture_output=True, cwd=str(d))
+    return video_only
 
-    original_video = d / "original.mp4"
-    final_video = d / "final.mp4"
-    sfx_track = _build_sfx_track(d, req.sfx_type, req.sfx_volume, segments, duration)
+
+def _mux_video_audio(original_video: Path, video_only: Path,
+                     sfx_track: Optional[Path], final_video: Path) -> None:
     if sfx_track and _has_audio_stream(original_video):
         subprocess.run([
             "ffmpeg", "-y", "-i", str(original_video), "-i", str(video_only), "-i", str(sfx_track),
@@ -850,6 +845,35 @@ def export_video(video_id: str, req: ExportRequest):
             "-shortest", str(final_video),
         ], check=True, capture_output=True)
 
+
+@app.post("/api/videos/{video_id}/export")
+def export_video(video_id: str, req: ExportRequest):
+    d = video_dir(video_id)
+    meta = json.loads((d / "meta.json").read_text())
+    frames_dir = d / "frames"
+    masks_dir = d / "masks"
+
+    frame_paths = sorted(frames_dir.glob("*.png"))
+    if not frame_paths:
+        raise HTTPException(400, "extraia o trecho antes de exportar")
+
+    segments = meta.get("segments") or [{
+        "start": meta["segment_start"],
+        "end": meta["segment_end"],
+        "first_frame": 1,
+        "frame_count": len(frame_paths),
+    }]
+    duration = meta.get("duration", segments[-1]["end"])
+
+    original_video = d / "original.mp4"
+    final_video = d / "final.mp4"
+    rendered_dir = _render_frames_to_dir(video_id, d, frame_paths, masks_dir, lambda _frame_num: req)
+    video_only = _assemble_video_only(
+        d, meta, frame_paths, rendered_dir, duration, set(req.excluded_frames)
+    )
+    sfx_track = _build_sfx_track(d, req.sfx_type, req.sfx_volume, segments, duration)
+    _mux_video_audio(original_video, video_only, sfx_track, final_video)
+
     return {"download_url": f"/storage/{video_id}/final.mp4"}
 
 
@@ -866,11 +890,35 @@ def export_timeline(video_id: str, req: TimelineExportRequest):
 
     if effect_clips:
         effect_segments = _validate_clip_segments(effect_clips, duration)
-        _extract_segments_to_frames(d, meta, effect_segments)
+        extracted = _extract_segments_to_frames(d, meta, effect_segments)
         generate_masks(video_id)
-        render_req = _render_request_from_clip(effect_clips[0])
-        export_video(video_id, render_req)
-        base_video = d / "final.mp4"
+        frame_paths = sorted((d / "frames").glob("*.png"))
+        masks_dir = d / "masks"
+        requests_by_frame = {}
+        for clip, seg in zip(effect_clips, extracted["segments"]):
+            clip_req = _render_request_from_clip(clip)
+            first = int(seg["first_frame"])
+            count = int(seg["frame_count"])
+            for frame_num in range(first, first + count):
+                requests_by_frame[frame_num] = clip_req
+
+        rendered_dir = _render_frames_to_dir(
+            video_id,
+            d,
+            frame_paths,
+            masks_dir,
+            lambda frame_num: requests_by_frame[frame_num],
+        )
+        base_video = _assemble_video_only(
+            d,
+            meta,
+            frame_paths,
+            rendered_dir,
+            duration,
+            set(),
+            output_name="timeline_video_only.mp4",
+            prefix="timeline_",
+        )
     else:
         base_video = d / "original.mp4"
 
