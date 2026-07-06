@@ -5,6 +5,10 @@ backend/__pycache__/
 **/__pycache__/
 *.log
 
+# Local agent/session instructions
+AGENTS.md
+CLAUDE.md
+
 frontend/node_modules/
 frontend/dist/
 
